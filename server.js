@@ -10,19 +10,35 @@ const app = express();
 app.use(express.json());
 app.use(express.static('client'));
 
-let clientPromise;
-let db;
+
+const { MongoClient } = require('mongodb');
+
+let clientPromise = null;
+let db = null;
+
 async function initDb() {
   if (db) return db;
+
   if (!clientPromise) {
-    const client = new MongoClient(process.env.DB_URI, {
+    const uri = process.env.MONGO_URI || process.env.DB_URI;
+    if (!uri) {
+      throw new Error('Missing MONGO_URI or DB_URI environment variable');
+    }
+
+    const client = new MongoClient(uri, {
       useNewUrlParser: true,
-      useUnifiedTopology: true,
+      useUnifiedTopology: true
     });
-    clientPromise = client.connect();
+
+    // cache promise and ensure failing connect resets cache so future attempts can retry
+    clientPromise = client.connect().catch(err => {
+      clientPromise = null;
+      throw err;
+    });
   }
-  const client = await clientPromise;
-  db = client.db('secure_app_db');
+
+  const connectedClient = await clientPromise;
+  db = connectedClient.db('secure_app_db');
   return db;
 }
 
