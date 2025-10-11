@@ -13,28 +13,22 @@ app.use(express.static('client'));
 let clientPromise = null;
 let db = null;
 
-async function initDb() {
+
+export async function initDb() {
   if (db) return db;
 
-  if (!clientPromise) {
-    const uri = process.env.MONGO_URI || process.env.DB_URI;
-    if (!uri) throw new Error('Missing MONGO_URI or DB_URI environment variable');
-
-    const client = new MongoClient(uri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true
-    });
-
-    clientPromise = client.connect().catch(err => {
-      clientPromise = null; // reset cache if connection fails
-      throw err;
-    });
+  if (!client) {
+    client = new MongoClient(process.env.DB_URI);
+    await client.connect();
   }
 
-  const connectedClient = await clientPromise;
-  db = connectedClient.db('secure_app_db');
+  db = client.db("secure_app_db");
   return db;
 }
+
+console.log("Connecting to DB...");
+db = await initDb();
+console.log("Connected to DB successfully");
 
 // Initialize session store once
 let sessionSetup = false;
@@ -106,24 +100,24 @@ function setupRoutes() {
     next();
   };
 
-  // --- ROUTES ---
-  app.post('/api/login', async (req, res) => {
-    try {
-      const { username, password } = req.body;
-      const user = USERS[username];
-      if (user && user.password === password) {
-        req.session.user = { username, ...user };
-        await logger(req.session.user, 'LOGIN_SUCCESS');
-        res.json(req.session.user);
-      } else {
-        await logger({ username, role: 'N/A' }, 'LOGIN_FAILURE');
-        res.status(401).json({ message: 'Invalid credentials' });
-      }
-    } catch (err) {
-      console.error('Login error:', err);
-      res.status(500).json({ message: 'Server error during login', details: err.message });
-    }
-  });
+  app.post("/api/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    const db = await initDb();
+    const user = await db.collection("users").findOne({ username });
+
+    if (!user) return res.status(401).json({ error: "User not found" });
+    if (user.password !== password)
+      return res.status(401).json({ error: "Invalid password" });
+
+    req.session.user = { username };
+    return res.json({ message: "Login successful" });
+  } catch (err) {
+    console.error("Login error:", err);
+    return res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
 
   app.get('/api/logout', loginRequired, async (req, res) => {
     await logger(req.session.user, 'LOGOUT');
@@ -206,3 +200,4 @@ if (require.main === module) {
     app.listen(port, () => console.log(`Server running on http://localhost:${port}`));
   })();
 }
+
