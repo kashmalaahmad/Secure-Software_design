@@ -1,0 +1,63 @@
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.view {
+    animation: fadeIn 0.5s ease-out;
+}
+
+.note {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    padding: 16px;
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.note:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.note-content {
+    flex-grow: 1;
+    color: #1f2937;
+}
+
+.note-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.note-meta {
+    font-size: 0.875rem;
+    color: #6b7280;
+    margin-top: 8px;
+}
+
+.like-button {
+    background: #e5e7eb;
+    color: #374151;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+}
+
+.like-button.liked {
+    background: #3b82f6;
+    color: #ffffff;
+}
+
+.like-button:hover {
+    background: #d1d5db;
+    transform: scale(1.05);
+}
+
+.like-button.liked:hover {
+    background: #2563eb;
+}
