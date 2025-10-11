@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const { MongoClient } = require('mongodb');
 const session = require('express-session');
@@ -10,33 +9,28 @@ const app = express();
 app.use(express.json());
 app.use(express.static('client'));
 
-let clientPromise = null;
-let db = null;
+let client;
+let db;
+let sessionSetup = false;
+let routesSetup = false;
 
-
-export async function initDb() {
+async function initDb() {
   if (db) return db;
-
   if (!client) {
-    client = new MongoClient(process.env.DB_URI);
+    const uri = process.env.MONGO_URI || process.env.DB_URI;
+    if (!uri) throw new Error('Missing MONGO_URI or DB_URI');
+    client = new MongoClient(uri);
     await client.connect();
   }
-
-  db = client.db("secure_app_db");
+  db = client.db('secure_app_db');
   return db;
 }
 
-console.log("Connecting to DB...");
-db = await initDb();
-console.log("Connected to DB successfully");
-
-// Initialize session store once
-let sessionSetup = false;
 async function ensureSessionMiddleware() {
   if (sessionSetup) return;
-  await initDb();
+  const uri = process.env.MONGO_URI || process.env.DB_URI;
   const store = MongoStore.create({
-    clientPromise,
+    mongoUrl: uri,
     dbName: 'secure_app_db',
   });
   app.use(session({
@@ -54,8 +48,6 @@ async function ensureSessionMiddleware() {
   sessionSetup = true;
 }
 
-// Define routes
-let routesSetup = false;
 function setupRoutes() {
   if (routesSetup) return;
   routesSetup = true;
@@ -101,23 +93,20 @@ function setupRoutes() {
   };
 
   app.post("/api/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    const db = await initDb();
-    const user = await db.collection("users").findOne({ username });
-
-    if (!user) return res.status(401).json({ error: "User not found" });
-    if (user.password !== password)
-      return res.status(401).json({ error: "Invalid password" });
-
-    req.session.user = { username };
-    return res.json({ message: "Login successful" });
-  } catch (err) {
-    console.error("Login error:", err);
-    return res.status(500).json({ error: "Server error", details: err.message });
-  }
-});
-
+    try {
+      const { username, password } = req.body;
+      const user = USERS[username];
+      if (!user || user.password !== password) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+      req.session.user = { username, ...user };
+      await logger(req.session.user, 'LOGIN_SUCCESS');
+      res.json({ message: "Login successful", user: req.session.user });
+    } catch (err) {
+      console.error("Login error:", err);
+      res.status(500).json({ error: "Server error", details: err.message });
+    }
+  });
 
   app.get('/api/logout', loginRequired, async (req, res) => {
     await logger(req.session.user, 'LOGOUT');
@@ -165,7 +154,6 @@ function setupRoutes() {
   app.get('/api/audit', loginRequired, async (req, res) => {
     if (req.session.user.role !== 'admin')
       return res.status(403).json({ message: "Admin access required" });
-
     const db = await initDb();
     const logs = await db.collection('audit_logs').find({}).sort({ timestamp: -1 }).toArray();
     res.json(logs);
@@ -182,7 +170,6 @@ function setupRoutes() {
   });
 }
 
-// --- Export handler for Vercel ---
 let handler;
 module.exports = async (req, res) => {
   if (!sessionSetup) await ensureSessionMiddleware();
@@ -191,7 +178,6 @@ module.exports = async (req, res) => {
   return handler(req, res);
 };
 
-// --- Local Development ---
 if (require.main === module) {
   (async () => {
     await ensureSessionMiddleware();
@@ -200,4 +186,3 @@ if (require.main === module) {
     app.listen(port, () => console.log(`Server running on http://localhost:${port}`));
   })();
 }
-
