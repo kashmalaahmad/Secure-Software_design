@@ -1,4 +1,4 @@
-
+// server.js
 const express = require('express');
 const { MongoClient } = require('mongodb');
 const session = require('express-session');
@@ -10,9 +10,6 @@ const app = express();
 app.use(express.json());
 app.use(express.static('client'));
 
-
-const { MongoClient } = require('mongodb');
-
 let clientPromise = null;
 let db = null;
 
@@ -21,18 +18,15 @@ async function initDb() {
 
   if (!clientPromise) {
     const uri = process.env.MONGO_URI || process.env.DB_URI;
-    if (!uri) {
-      throw new Error('Missing MONGO_URI or DB_URI environment variable');
-    }
+    if (!uri) throw new Error('Missing MONGO_URI or DB_URI environment variable');
 
     const client = new MongoClient(uri, {
       useNewUrlParser: true,
       useUnifiedTopology: true
     });
 
-    // cache promise and ensure failing connect resets cache so future attempts can retry
     clientPromise = client.connect().catch(err => {
-      clientPromise = null;
+      clientPromise = null; // reset cache if connection fails
       throw err;
     });
   }
@@ -42,7 +36,7 @@ async function initDb() {
   return db;
 }
 
-
+// Initialize session store once
 let sessionSetup = false;
 async function ensureSessionMiddleware() {
   if (sessionSetup) return;
@@ -57,15 +51,16 @@ async function ensureSessionMiddleware() {
     saveUninitialized: false,
     store,
     cookie: {
-      secure: process.env.NODE_ENV === 'production', // true on Vercel (HTTPS)
+      secure: process.env.NODE_ENV === 'production',
       httpOnly: true,
       sameSite: 'lax',
-      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      maxAge: 24 * 60 * 60 * 1000,
     }
   }));
   sessionSetup = true;
 }
 
+// Define routes
 let routesSetup = false;
 function setupRoutes() {
   if (routesSetup) return;
@@ -90,7 +85,6 @@ function setupRoutes() {
   const dbHandler = {
     getNotes: async () => {
       const db = await initDb();
-
       const collectionName = global.PRIMARY_DB_IS_DOWN ? 'notes_fallback' : 'notes_primary';
       return await db.collection(collectionName).find({}).sort({ timestamp: -1 }).toArray();
     },
@@ -112,16 +106,22 @@ function setupRoutes() {
     next();
   };
 
+  // --- ROUTES ---
   app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
-    const user = USERS[username];
-    if (user && user.password === password) {
-      req.session.user = { username, ...user };
-      await logger(req.session.user, 'LOGIN_SUCCESS');
-      return res.json(req.session.user);
-    } else {
-      await logger({ username: username, role: 'N/A' }, 'LOGIN_FAILURE');
-      return res.status(401).json({ message: 'Invalid credentials' });
+    try {
+      const { username, password } = req.body;
+      const user = USERS[username];
+      if (user && user.password === password) {
+        req.session.user = { username, ...user };
+        await logger(req.session.user, 'LOGIN_SUCCESS');
+        res.json(req.session.user);
+      } else {
+        await logger({ username, role: 'N/A' }, 'LOGIN_FAILURE');
+        res.status(401).json({ message: 'Invalid credentials' });
+      }
+    } catch (err) {
+      console.error('Login error:', err);
+      res.status(500).json({ message: 'Server error during login', details: err.message });
     }
   });
 
@@ -131,11 +131,11 @@ function setupRoutes() {
   });
 
   app.get('/api/notes', loginRequired, async (req, res) => {
-    let notes = await dbHandler.getNotes();
-    if (req.session.user.role !== 'admin') {
-      notes = notes.filter(note => note.authorId === req.session.user.id);
-    }
-    res.json(notes);
+    const notes = await dbHandler.getNotes();
+    const visible = req.session.user.role === 'admin'
+      ? notes
+      : notes.filter(n => n.authorId === req.session.user.id);
+    res.json(visible);
   });
 
   app.post('/api/notes', loginRequired, async (req, res) => {
@@ -154,27 +154,24 @@ function setupRoutes() {
   app.delete('/api/notes/:id', loginRequired, async (req, res) => {
     const noteId = parseInt(req.params.id, 10);
     const notes = await dbHandler.getNotes();
-    const noteToDelete = notes.find(n => n.id === noteId);
+    const note = notes.find(n => n.id === noteId);
+    if (!note) return res.status(404).json({ message: "Note not found" });
 
-    if (!noteToDelete) return res.status(404).json({ message: "Note not found" });
-
-    const isOwner = noteToDelete.authorId === req.session.user.id;
-    const isAdmin = req.session.user.role === 'admin';
-
-    if (isOwner || isAdmin) {
-      await dbHandler.deleteNote(noteId);
-      await logger(req.session.user, 'DELETE_NOTE');
-      res.status(200).json({ message: 'Note deleted' });
-    } else {
+    const canDelete = note.authorId === req.session.user.id || req.session.user.role === 'admin';
+    if (!canDelete) {
       await logger(req.session.user, 'DELETE_NOTE_DENIED');
-      res.status(403).json({ message: 'Access Denied' });
+      return res.status(403).json({ message: 'Access Denied' });
     }
+
+    await dbHandler.deleteNote(noteId);
+    await logger(req.session.user, 'DELETE_NOTE');
+    res.status(200).json({ message: 'Note deleted' });
   });
 
   app.get('/api/audit', loginRequired, async (req, res) => {
-    if (req.session.user.role !== 'admin') {
+    if (req.session.user.role !== 'admin')
       return res.status(403).json({ message: "Admin access required" });
-    }
+
     const db = await initDb();
     const logs = await db.collection('audit_logs').find({}).sort({ timestamp: -1 }).toArray();
     res.json(logs);
@@ -186,32 +183,26 @@ function setupRoutes() {
   });
 
   app.get('/api/session', (req, res) => {
-    if (req.session.user) {
-      res.json({ user: req.session.user });
-    } else {
-      res.status(401).json({ message: 'Not authenticated' });
-    }
+    if (req.session.user) res.json({ user: req.session.user });
+    else res.status(401).json({ message: 'Not authenticated' });
   });
 }
 
-
+// --- Export handler for Vercel ---
 let handler;
 module.exports = async (req, res) => {
-  if (!sessionSetup) {
-    await ensureSessionMiddleware();
-  }
+  if (!sessionSetup) await ensureSessionMiddleware();
   setupRoutes();
-  if (!handler) {
-    handler = serverless(app);
-  }
+  if (!handler) handler = serverless(app);
   return handler(req, res);
 };
 
+// --- Local Development ---
 if (require.main === module) {
   (async () => {
     await ensureSessionMiddleware();
     setupRoutes();
     const port = process.env.PORT || 3000;
-    app.listen(port, () => console.log(`Local server listening on ${port}`));
+    app.listen(port, () => console.log(`Server running on http://localhost:${port}`));
   })();
 }
