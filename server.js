@@ -113,13 +113,13 @@ function setupRoutes() {
                 { expiresIn: '1d' } // Token expires in 1 day
             );
 
-            // 3. Set the token as an HTTP-only cookie
-            res.cookie('auth_token', token, {
-                httpOnly: true, // Prevents client-side JS access (security)
-                secure: process.env.NODE_ENV === 'production', // Use 'secure' only over HTTPS
-                sameSite: 'lax',
-                maxAge: 24 * 60 * 60 * 1000, // 1 day expiration
-            });
+ res.cookie('auth_token', token, {
+        httpOnly: true,
+        // MUST be true because SameSite='None' requires HTTPS
+        secure: process.env.NODE_ENV === 'production', 
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', 
+        maxAge: 24 * 60 * 60 * 1000, 
+    });
 
             await logger(user, 'LOGIN_SUCCESS');
             // Return user info to the client to update the UI immediately
