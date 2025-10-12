@@ -15,29 +15,20 @@ app.use(express.json());
 app.use(cookieParser()); // Use cookie parser to read tokens
 app.use(express.static('client'));
 
-let client;
 let db;
 let routesSetup = false; // sessionSetup and ensureSessionMiddleware are removed
 
 let cachedClient = null;
 let cachedDb = null;
 
+const uri = process.env.MONGO_URI || process.env.DB_URI;
+const client = new MongoClient(uri);
+let dbPromise = client.connect().then(c => c.db('secure_app_db'));
+
 async function initDb() {
-  if (cachedDb) return cachedDb;
-
-  const uri = process.env.MONGO_URI || process.env.DB_URI;
-  if (!uri) throw new Error('Missing MONGO_URI or DB_URI');
-
-  if (!cachedClient) {
-    cachedClient = new MongoClient(uri);
-    await cachedClient.connect();
-  }
-
-  cachedDb = cachedClient.db('secure_app_db');
-  return cachedDb;
+  return dbPromise;
 }
 
-// REMOVED: async function ensureSessionMiddleware() - No longer needed with JWT
 
 function setupRoutes() {
     if (routesSetup) return;
@@ -203,19 +194,11 @@ res.cookie('auth_token', token, {
         res.json({ user: req.user });
     });
 }
+app.get('/api/ping', (req, res) => res.send('pong'));
 
-let handler;
-module.exports = async (req, res) => {
-    // Only call setupRoutes()
-    setupRoutes(); 
-    
-    // We run initDb() and setupRoutes() directly outside of serverless handler
-    // to ensure they are available, though for Vercel, serverless-http calls
-    // the setup routes function on every request.
-    
-    if (!handler) handler = serverless(app);
-    return handler(req, res);
-};
+setupRoutes();
+module.exports = require('serverless-http')(app);
+
 
 if (require.main === module) {
     (async () => {
