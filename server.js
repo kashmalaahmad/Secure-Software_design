@@ -4,6 +4,12 @@ const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const serverless = require('serverless-http');
 require('dotenv').config();
+console.log('DB_URI loaded status:', !!process.env.DB_URI ? 'LOADED' : 'MISSING/EMPTY');
+if (!!process.env.DB_URI && !process.env.DB_URI.startsWith('mongodb')) {
+    console.error('DB_URI value starts with:', process.env.DB_URI.substring(0, 30));
+}
+
+
 
 const app = express();
 app.use(express.json());

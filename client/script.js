@@ -1,4 +1,4 @@
-const API_URL = '/api';
+const API_URL = '/api'; 
 
 const loginView = document.getElementById('login-view');
 const notesView = document.getElementById('notes-view');
@@ -18,11 +18,27 @@ const auditLogContent = document.getElementById('audit-log-content');
 
 let currentUser = null;
 
+
 const api = {
     async request(endpoint, options = {}) {
         options.credentials = 'include';
         const res = await fetch(API_URL + endpoint, options);
-        if (!res.ok) throw new Error((await res.json()).message);
+
+        if (!res.ok) {
+            // Attempt to read JSON body for an error message
+            const text = await res.text();
+            let errorMessage = `Server error: ${res.status} ${res.statusText}`;
+
+            try {
+                // If the response is JSON, use the message field
+                errorMessage = JSON.parse(text).message || JSON.parse(text).error || errorMessage;
+            } catch (e) {
+                // If it's not JSON (like an empty body for a 405), use the status text
+                errorMessage = text || errorMessage;
+            }
+            throw new Error(errorMessage);
+        }
+
         if (res.status !== 204) return res.json();
     }
 };
