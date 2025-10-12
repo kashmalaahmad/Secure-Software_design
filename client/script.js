@@ -48,20 +48,27 @@ const showView = (viewId) => {
     document.getElementById(viewId).style.display = 'block';
 };
 
-const updateUI = async () => {
+
+const updateUI = async (userData = null) => { 
     try {
-        const data = await api.request('/session');
+        let data;
+        if (userData) {
+            data = { user: userData }; 
+        } else {
+            data = await api.request('/session');
+        }
+        
         currentUser = data.user;
         userInfo.textContent = `${currentUser.username} (${currentUser.role})`;
         viewAuditLink.style.display = currentUser.role === 'admin' ? 'inline' : 'none';
         await renderNotes();
         showView('notes-view');
+
     } catch (e) {
         currentUser = null;
         showView('login-view');
     }
 };
-
 const renderNotes = async () => {
     const notes = await api.request('/notes');
     notesList.innerHTML = '';
@@ -79,18 +86,19 @@ const renderNotes = async () => {
     });
 };
 
+
 loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const username = document.getElementById('username').value;
     const password = document.getElementById('password').value;
     try {
-        await api.request('/login', {
+        const { user } = await api.request('/login', { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password })
         });
-         console.log('Login successful! Updating UI...'); 
-        await updateUI();
+
+        await updateUI(user); 
     } catch (error) {
         document.getElementById('login-error').textContent = error.message;
     }
