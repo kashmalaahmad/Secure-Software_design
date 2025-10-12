@@ -39,6 +39,7 @@ async function ensureSessionMiddleware() {
     mongoUrl: uri,
     dbName: 'secure_app_db',
   });
+   app.set('trust proxy', 1); 
   app.use(session({
     secret: process.env.SESSION_SECRET || 'change-this-secret',
     resave: false,
