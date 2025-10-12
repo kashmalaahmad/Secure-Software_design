@@ -19,16 +19,22 @@ let client;
 let db;
 let routesSetup = false; // sessionSetup and ensureSessionMiddleware are removed
 
+let cachedClient = null;
+let cachedDb = null;
+
 async function initDb() {
-    if (db) return db;
-    if (!client) {
-        const uri = process.env.MONGO_URI || process.env.DB_URI;
-        if (!uri) throw new Error('Missing MONGO_URI or DB_URI');
-        client = new MongoClient(uri);
-        await client.connect();
-    }
-    db = client.db('secure_app_db');
-    return db;
+  if (cachedDb) return cachedDb;
+
+  const uri = process.env.MONGO_URI || process.env.DB_URI;
+  if (!uri) throw new Error('Missing MONGO_URI or DB_URI');
+
+  if (!cachedClient) {
+    cachedClient = new MongoClient(uri);
+    await cachedClient.connect();
+  }
+
+  cachedDb = cachedClient.db('secure_app_db');
+  return cachedDb;
 }
 
 // REMOVED: async function ensureSessionMiddleware() - No longer needed with JWT
