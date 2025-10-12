@@ -81,11 +81,12 @@ function setupRoutes() {
 
         try {
             // Verify and decode the token using the secret key
+             console.log("JWT_SECRET used:", process.env.JWT_SECRET); 
             const user = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
             req.user = user; // Attach user payload to the request for use in routes
             next();
         } catch (err) {
-            // Token is invalid or expired
+            console.error("JWT Verification Error:", err.message); 
             return res.status(401).json({ message: "Invalid or expired token" });
         }
     };
@@ -113,13 +114,12 @@ function setupRoutes() {
                 { expiresIn: '1d' } // Token expires in 1 day
             );
 
- res.cookie('auth_token', token, {
-        httpOnly: true,
-        // MUST be true because SameSite='None' requires HTTPS
-        secure: process.env.NODE_ENV === 'production', 
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', 
-        maxAge: 24 * 60 * 60 * 1000, 
-    });
+res.cookie('auth_token', token, {
+    httpOnly: true,
+    secure: true, 
+    sameSite: 'none', 
+    maxAge: 24 * 60 * 60 * 1000, 
+});
 
             await logger(user, 'LOGIN_SUCCESS');
             // Return user info to the client to update the UI immediately
