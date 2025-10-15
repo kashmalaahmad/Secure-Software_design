@@ -2,14 +2,12 @@ const express = require('express');
 const { MongoClient } = require('mongodb');
 const jwt = require('jsonwebtoken');
 const cookieParser = require('cookie-parser');
-const serverless = require('serverless-http');
 
 const app = express();
 
 // Middleware
 app.use(express.json());
 app.use(cookieParser());
-app.use(express.static('client'));
 
 // Environment variables
 const uri = process.env.DB_URI || process.env.MONGO_URI;
@@ -88,7 +86,9 @@ function authRequired(req, res, next) {
   }
 }
 
+// Routes
 
+// Health check
 app.get('/api/ping', async (req, res) => {
   try {
     const db = await connectToDatabase();
@@ -204,6 +204,7 @@ app.post('/api/notes', authRequired, async (req, res) => {
   }
 });
 
+// Delete note
 app.delete('/api/notes/:id', authRequired, async (req, res) => {
   try {
     const noteId = parseInt(req.params.id, 10);
@@ -234,7 +235,7 @@ app.delete('/api/notes/:id', authRequired, async (req, res) => {
   }
 });
 
-
+// Get audit logs
 app.get('/api/audit', authRequired, async (req, res) => {
   try {
     if (req.user.role !== 'admin') {
@@ -250,19 +251,11 @@ app.get('/api/audit', authRequired, async (req, res) => {
   }
 });
 
+// Toggle database
 app.post('/api/toggle_db', authRequired, (req, res) => {
   global.PRIMARY_DB_IS_DOWN = !global.PRIMARY_DB_IS_DOWN;
   res.json({ isDown: global.PRIMARY_DB_IS_DOWN });
 });
 
-
+// Export for Vercel
 module.exports = app;
-module.exports.handler = serverless(app);
-
-
-if (require.main === module) {
-  const port = process.env.PORT || 3000;
-  app.listen(port, () => {
-    console.log(`✅ Server running at http://localhost:${port}`);
-  });
-}
