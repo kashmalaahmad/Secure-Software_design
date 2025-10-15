@@ -18,8 +18,19 @@ if (!uri) {
 let dbPromise = null;
 async function initDb() {
   if (!dbPromise) {
-    const client = new MongoClient(uri);
-    dbPromise = client.connect().then(c => c.db('secure_app_db'));
+    try {
+      const client = new MongoClient(uri, {
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 45000,
+      });
+      dbPromise = client.connect().then(c => {
+        console.log('✅ MongoDB connected successfully');
+        return c.db('secure_app_db');
+      });
+    } catch (error) {
+      console.error('❌ MongoDB connection failed:', error);
+      throw error;
+    }
   }
   return dbPromise;
 }
@@ -48,13 +59,17 @@ function setupRoutes() {
   };
 
   const logger = async (user, action) => {
-    const db = await initDb();
-    await db.collection('audit_logs').insertOne({
-      timestamp: new Date(),
-      username: user.username,
-      role: user.role,
-      action,
-    });
+    try {
+      const db = await initDb();
+      await db.collection('audit_logs').insertOne({
+        timestamp: new Date(),
+        username: user.username,
+        role: user.role,
+        action,
+      });
+    } catch (error) {
+      console.error('❌ Logger error:', error);
+    }
   };
 
   const dbHandler = {
@@ -77,14 +92,28 @@ function setupRoutes() {
   };
 
   const authRequired = (req, res, next) => {
-    const token = req.cookies.auth_token;
-    if (!token) return res.status(401).json({ message: "Authentication required" });
+    // Check cookie first, then Authorization header
+    let token = req.cookies.auth_token;
+    
+    if (!token && req.headers.authorization) {
+      const parts = req.headers.authorization.split(' ');
+      if (parts.length === 2 && parts[0] === 'Bearer') {
+        token = parts[1];
+      }
+    }
+    
+    if (!token) {
+      console.log('❌ No token found in request');
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    
     try {
       const user = jwt.verify(token, process.env.JWT_SECRET || 'your-jwt-secret');
       req.user = user;
+      console.log('✅ User authenticated:', user.username);
       next();
     } catch (err) {
-      console.error("JWT Verification Error:", err.message);
+      console.error("❌ JWT Verification Error:", err.message);
       return res.status(401).json({ message: "Invalid or expired token" });
     }
   };
@@ -92,89 +121,126 @@ function setupRoutes() {
   app.post("/api/login", async (req, res) => {
     try {
       const { username, password } = req.body;
+      console.log('🔐 Login attempt:', username);
+      
       const user = USERS[username];
       if (!user || user.password !== password) {
         await logger({ username, role: 'unknown' }, 'LOGIN_FAILED');
+        console.log('❌ Invalid credentials for:', username);
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
       const tokenPayload = { id: user.id, username: user.username, role: user.role };
-      const token = jwt.sign(tokenPayload, process.env.JWT_SECRET || 'your-jwt-secret', { expiresIn: '1d' });
+      const token = jwt.sign(
+        tokenPayload, 
+        process.env.JWT_SECRET || 'your-jwt-secret', 
+        { expiresIn: '1d' }
+      );
 
+      // Set cookie (will work if same-origin)
       res.cookie('auth_token', token, {
         httpOnly: true,
         secure: true,
         sameSite: 'none',
         maxAge: 24 * 60 * 60 * 1000,
+        path: '/'
       });
 
       await logger(user, 'LOGIN_SUCCESS');
-      res.json({ message: "Login successful", user: tokenPayload });
+      console.log('✅ Login successful for:', username);
+      
+      // ALSO return token in response body (for localStorage fallback)
+      res.json({ 
+        message: "Login successful", 
+        user: tokenPayload,
+        token: token
+      });
     } catch (err) {
-      console.error("Login error:", err);
+      console.error("❌ Login error:", err);
       res.status(500).json({ error: "Server error", details: err.message });
     }
   });
 
   app.get('/api/logout', authRequired, async (req, res) => {
     await logger(req.user, 'LOGOUT');
-    res.cookie('auth_token', '', {
-      expires: new Date(0),
+    res.clearCookie('auth_token', {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax'
+      secure: true,
+      sameSite: 'none',
+      path: '/'
     });
     res.json({ message: 'Logged out' });
   });
 
   app.get('/api/notes', authRequired, async (req, res) => {
-    const notes = await dbHandler.getNotes();
-    const visible = req.user.role === 'admin'
-      ? notes
-      : notes.filter(n => n.authorId === req.user.id);
-    res.json(visible);
+    try {
+      const notes = await dbHandler.getNotes();
+      const visible = req.user.role === 'admin'
+        ? notes
+        : notes.filter(n => n.authorId === req.user.id);
+      res.json(visible);
+    } catch (error) {
+      console.error('❌ Error fetching notes:', error);
+      res.status(500).json({ error: 'Failed to fetch notes' });
+    }
   });
 
   app.post('/api/notes', authRequired, async (req, res) => {
-    const newNote = {
-      id: Date.now(),
-      content: req.body.content,
-      authorId: req.user.id,
-      authorUsername: req.user.username,
-      timestamp: new Date()
-    };
-    await dbHandler.addNote(newNote);
-    await logger(req.user, 'CREATE_NOTE');
-    res.status(201).json(newNote);
+    try {
+      const newNote = {
+        id: Date.now(),
+        content: req.body.content,
+        authorId: req.user.id,
+        authorUsername: req.user.username,
+        timestamp: new Date()
+      };
+      await dbHandler.addNote(newNote);
+      await logger(req.user, 'CREATE_NOTE');
+      res.status(201).json(newNote);
+    } catch (error) {
+      console.error('❌ Error creating note:', error);
+      res.status(500).json({ error: 'Failed to create note' });
+    }
   });
 
   app.delete('/api/notes/:id', authRequired, async (req, res) => {
-    const noteId = parseInt(req.params.id, 10);
-    const notes = await dbHandler.getNotes();
-    const note = notes.find(n => n.id === noteId);
-    if (!note) return res.status(404).json({ message: "Note not found" });
+    try {
+      const noteId = parseInt(req.params.id, 10);
+      const notes = await dbHandler.getNotes();
+      const note = notes.find(n => n.id === noteId);
+      if (!note) return res.status(404).json({ message: "Note not found" });
 
-    const canDelete = note.authorId === req.user.id || req.user.role === 'admin';
-    if (!canDelete) {
-      await logger(req.user, 'DELETE_NOTE_DENIED');
-      return res.status(403).json({ message: 'Access Denied' });
+      const canDelete = note.authorId === req.user.id || req.user.role === 'admin';
+      if (!canDelete) {
+        await logger(req.user, 'DELETE_NOTE_DENIED');
+        return res.status(403).json({ message: 'Access Denied' });
+      }
+
+      await dbHandler.deleteNote(noteId);
+      await logger(req.user, 'DELETE_NOTE');
+      res.status(200).json({ message: 'Note deleted' });
+    } catch (error) {
+      console.error('❌ Error deleting note:', error);
+      res.status(500).json({ error: 'Failed to delete note' });
     }
-
-    await dbHandler.deleteNote(noteId);
-    await logger(req.user, 'DELETE_NOTE');
-    res.status(200).json({ message: 'Note deleted' });
   });
 
   app.get('/api/audit', authRequired, async (req, res) => {
-    if (req.user.role !== 'admin')
-      return res.status(403).json({ message: "Admin access required" });
-    const db = await initDb();
-    const logs = await db.collection('audit_logs').find({}).sort({ timestamp: -1 }).toArray();
-    res.json(logs);
+    try {
+      if (req.user.role !== 'admin')
+        return res.status(403).json({ message: "Admin access required" });
+      const db = await initDb();
+      const logs = await db.collection('audit_logs').find({}).sort({ timestamp: -1 }).toArray();
+      res.json(logs);
+    } catch (error) {
+      console.error('❌ Error fetching audit logs:', error);
+      res.status(500).json({ error: 'Failed to fetch audit logs' });
+    }
   });
 
   app.post('/api/toggle_db', authRequired, (req, res) => {
     global.PRIMARY_DB_IS_DOWN = !global.PRIMARY_DB_IS_DOWN;
+    console.log(`🔄 Database toggled. Primary is now ${global.PRIMARY_DB_IS_DOWN ? 'DOWN' : 'UP'}`);
     res.json({ isDown: global.PRIMARY_DB_IS_DOWN });
   });
 
@@ -184,7 +250,7 @@ function setupRoutes() {
 }
 
 setupRoutes();
-module.exports = require('serverless-http')(app);
+module.exports = serverless(app);
 
 if (require.main === module) {
   (async () => {
